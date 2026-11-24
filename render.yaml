@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: singhrj-transport-api
+    name: traspot-backend
     runtime: node
     plan: free
     buildCommand: npm ci
