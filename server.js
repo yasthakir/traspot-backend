@@ -1,11 +1,24 @@
-import 'dotenv/config';
 import bcrypt from 'bcryptjs';
 import cookieParser from 'cookie-parser';
+import dotenv from 'dotenv';
 import express from 'express';
+import { existsSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
+import nodemailer from 'nodemailer';
+import { fileURLToPath } from 'node:url';
+
+const backendDirectory = dirname(fileURLToPath(import.meta.url));
+const backendEnvPath = resolve(backendDirectory, '.env');
+const workspaceEnvPath = resolve(backendDirectory, '..', '.env');
+if (existsSync(backendEnvPath)) {
+  dotenv.config({ path: backendEnvPath });
+} else if (existsSync(workspaceEnvPath)) {
+  dotenv.config({ path: workspaceEnvPath });
+}
 
 const app = express();
 const isProduction = process.env.NODE_ENV === 'production';
@@ -80,6 +93,53 @@ function validEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
+function createSmtpTransporter() {
+  const host = process.env.SMTP_HOST?.trim();
+  const port = Number(process.env.SMTP_PORT || 587);
+  const secureValue = process.env.SMTP_SECURE?.trim().toLowerCase();
+  const user = process.env.SMTP_USER?.trim();
+  const rawPass = process.env.SMTP_PASS;
+  const pass = host?.toLowerCase() === 'smtp.gmail.com' ? rawPass?.replace(/\s/g, '') : rawPass;
+  const from = process.env.MAIL_FROM?.trim() || user;
+  const to = process.env.MAIL_TO?.trim();
+
+  if (!host || !Number.isInteger(port) || port < 1 || port > 65535
+    || !user || !pass || !from || !to
+    || (secureValue && !['true', 'false'].includes(secureValue))) {
+    throw new Error('SMTP is not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASS, MAIL_FROM, and MAIL_TO.');
+  }
+
+  return {
+    transporter: nodemailer.createTransport({
+      host,
+      port,
+      secure: secureValue ? secureValue === 'true' : port === 465,
+      auth: { user, pass },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 20000,
+    }),
+    from,
+    to,
+  };
+}
+
+async function sendFormNotification({ subject, text, replyTo }) {
+  try {
+    const { transporter, from, to } = createSmtpTransporter();
+    await transporter.sendMail({ from, to, replyTo, subject, text });
+    return true;
+  } catch (error) {
+    console.error('Website form notification email failed.', {
+      code: error.code || 'SMTP_CONFIGURATION',
+      message: error.message,
+      command: error.command,
+      responseCode: error.responseCode,
+    });
+    return false;
+  }
+}
+
 function asyncRoute(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 }
@@ -145,7 +205,28 @@ app.post('/api/quotes', publicFormLimiter, asyncRoute(async (req, res) => {
       additional_notes: readText(req.body, 'additional_notes', { max: 4000 }),
     });
 
-    return res.status(201).json({ ok: true, id: record.id });
+    const emailSent = await sendFormNotification({
+      subject: 'New website freight quote request',
+      replyTo: record.email,
+      text: [
+        'A new freight quote request was submitted on the website.',
+        '',
+        `Name: ${record.full_name}`,
+        `Company: ${record.company_name || 'Not provided'}`,
+        `Email: ${record.email}`,
+        `Phone: ${record.phone}`,
+        `Service: ${record.service_type}`,
+        `Pickup: ${record.pickup_location}`,
+        `Delivery: ${record.delivery_location}`,
+        `Collection date: ${record.collection_date || 'Not provided'}`,
+        `Cargo: ${record.cargo_type || 'Not provided'}`,
+        `Weight: ${record.weight || 'Not provided'}`,
+        `Pallets: ${record.num_pallets || 'Not provided'}`,
+        `Additional notes: ${record.additional_notes || 'Not provided'}`,
+      ].join('\n'),
+    });
+
+    return res.status(201).json({ ok: true, id: record.id, emailSent });
   } catch (error) {
     if (error instanceof InputError) {
       return res.status(400).json({ error: error.message });
@@ -168,7 +249,24 @@ app.post('/api/messages', publicFormLimiter, asyncRoute(async (req, res) => {
       message: readText(req.body, 'message', { required: true, max: 4000 }),
     });
 
-    return res.status(201).json({ ok: true, id: record.id });
+    const emailSent = await sendFormNotification({
+      subject: 'New website contact message',
+      replyTo: record.email,
+      text: [
+        'A new contact message was submitted on the website.',
+        '',
+        `Name: ${record.fullName}`,
+        `Company: ${record.companyName || 'Not provided'}`,
+        `Email: ${record.email}`,
+        `Phone: ${record.phone}`,
+        `Service: ${record.service || 'Not provided'}`,
+        '',
+        'Message:',
+        record.message,
+      ].join('\n'),
+    });
+
+    return res.status(201).json({ ok: true, id: record.id, emailSent });
   } catch (error) {
     if (error instanceof InputError) {
       return res.status(400).json({ error: error.message });

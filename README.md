@@ -5,7 +5,7 @@ Express API for the SinghRJ Transport frontend. Quote and support submissions ar
 ## Run locally
 
 1. Run `npm ci`.
-2. Copy `.env.example` to `.env` and set `MONGODB_URI`, `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH`, and `JWT_SECRET`.
+2. Copy `.env.example` to `.env` and set `MONGODB_URI`, `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH`, `JWT_SECRET`, and the SMTP settings.
 3. Run `npm run dev`. The API listens on port 3000 by default.
 
 Generate a bcrypt hash locally without putting the password in source control:
@@ -29,3 +29,13 @@ In MongoDB Atlas, allow the Render service's outbound IP ranges and grant its da
 The expected API URL is `https://traspot-backend.onrender.com`. The frontend repository's `vercel.json` proxies `/api/*` to this URL, keeping admin requests same-origin. If Render assigns a different URL, update that Vercel rewrite.
 
 The Blueprint uses Render's free plan, which can spin down while idle. Upgrade the service if it needs to remain continuously warm.
+
+## Website form email
+
+Quote and contact submissions are saved to MongoDB and sent to `MAIL_TO` using Nodemailer over SMTP. Configure these values in the local `.env` and as Render environment variables:
+
+- `SMTP_HOST`, `SMTP_PORT`, and `SMTP_SECURE` from your mail provider. Port `465` normally uses `SMTP_SECURE=true`; port `587` normally uses `false` (STARTTLS).
+- `SMTP_USER` and `SMTP_PASS` for the SMTP account. For Gmail, enable 2-Step Verification and create an app password; use that app password rather than your normal account password. Gmail app-password display spaces are removed by the backend.
+- `MAIL_FROM` must be an address authorized by the SMTP provider; `MAIL_TO` is the inbox that receives form submissions.
+
+If SMTP delivery fails, the submission remains saved and the API response reports `emailSent: false`; check Render logs and SMTP settings. Never commit SMTP credentials.
